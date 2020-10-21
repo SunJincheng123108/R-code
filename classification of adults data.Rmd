@@ -1,0 +1,551 @@
+---
+title: "MISCADA Core IIA (3) Classification"
+author: "Sun Jincheng"
+date: "20 March 2020"
+output:
+  word_document: default
+  pdf_document: default
+fontsize: 11pt
+classoption: a4paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include=FALSE )
+```
+## Part I: Executive summary
+Write your executive summary here.
+In this part you should describe the modelling problem being addressed with this data set, the results of your analysis and any performance metrics in terms that would be easy for a non-expert to understand.  This means you will need to *avoid* reporting figures such as AUC, true positive rate, etc and should instead provide tangible performance numbers and easily interpretable plots: imagine you are handing this to your line manager in a future job.
+An important aspect of the executive summary is reflecting on what the real-world objective may be in relation to the data set you are using and how your analysis addresses it.  For example, if it is a medical dataset, is raw accuracy really the best objective to optimise?  If not, what is the real objective and how have you addressed it?  Feel free to be creative here if necessary to define an interesting question (eg set economic values on different ground truth/prediction outcomes).
+## Part II: Technical summary
+Write the technical details here.
+In this part you should describe how you approached the modelling problem and summarise the performance metrics for how well your final model performs in full technical detail.  The following list provides for some pointers to things you may want to think about addressing in this part:
+- initial data exploration;
+- details of any data coding or feature engineering;
+- any train/test/validate, cross-validation or bootstrap strategies employed;
+- strategies used to address any missingness;
+- the approach taken to model fitting, including any model design, early stopping criteria, hyperparameter selection or tuning, and algorithm choices;
+- insights into improvements achieved through different architectures (deep learning), data augmentation approaches, regularisation methods, etc;
+- details on the performance of the model, including calibration;
+- reporting of loss function choices, any post-model analysis such as tuning true/false positive rates, and justification of alternative objective functions;
+- any efforts at interpretability of models;
+- supporting plots for any of the above points.
+Do *not* include any code snippets in the written report, since code must be submitted separately anyhow.
+
+**Do not exceed 2 A4 pages after knitting to PDF for this section.**
+
+In this project, I want to predict whether the people salary is high(>$50K) or low(<=$50K) through the given information such as age, workclass, education and so on (showed in my R code) after learning the given data. To achieve my aim, I should first deal with my data.
+First I do the Cross-validation. Since there are some missing data, I should also consider this in the following trying,and remove them.
+
+```{r}
+uci.income <- read.csv("https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data"
+                       ,header = FALSE)
+library("dplyr")
+library("forcats")
+uci.income <- uci.income %>%
+  transmute(Age = V1,
+            Workclass  = V2,
+            Fnlwgt = V3,
+            Education  = V4,
+            EducationNum = V5,
+            Maritalstatus= V6,
+            Occupation= V7,
+            Relationship= V8,
+            Race= V9,
+            Sex= V10,
+            Capitalgain= V11,
+            Capitalloss= V12,
+            Hoursperweek= V13,
+            Nativecountry= V14,
+            Class= V15) %>%
+  mutate(Class = fct_recode(Class,high= " >50K",low= " <=50K"))
+```
+
+First I should define the task,then define learners, I would choose some ML classification models to fit the income data. To choose the model,I can try from the library("mlr3learners") to decide the model.Then models I choose are: rpart, log_reg, xgboost, kknn, naive_bayes (5 models in this question).I also tried other models like debug, featureless, glmnet, but they are certainly bad, so I removed them at the beginning.
+
+```{r}
+set.seed(5000)
+library("rsample")
+library("data.table")
+library("mlr3verse")
+library("mlr3learners")
+uci.income=na.omit(uci.income)
+income_task <- TaskClassif$new(id = "income",
+                               backend = uci.income, # <- NB: no na.omit() this time
+                               target = "Class",
+                               positive = "high")
+cv6 <- rsmp("cv", folds = 6)
+cv6$instantiate(income_task)
+```
+
+Then I can train learners on tasks and predict from learners. For each learner, I can get the results of my analysis and performance metrics.
+
+```{r}
+lrn_rpart <- lrn("classif.rpart", predict_type = "prob")
+lrn_log <- lrn("classif.log_reg", predict_type = "prob")
+lrn_log <- po("encode") %>>%
+       po(lrn_log)
+lrn_xgboost <- lrn("classif.xgboost", predict_type = "prob")
+lrn_xgboost <- po("encode") %>>%
+       po(lrn_xgboost)
+
+lrn_kknn <- lrn("classif.kknn", predict_type = "prob")
+lrn_bayes <- lrn("classif.naive_bayes", predict_type = "prob")
+
+ress <- benchmark(data.table(
+  task       = list(income_task),
+  learner    = list(lrn_rpart,
+                    lrn_log,
+                    lrn_xgboost,
+                    lrn_kknn,
+                    lrn_bayes),
+  resampling = list(cv6)
+), store_models = TRUE)
+
+ress$aggregate(list(msr("classif.ce"),
+                   msr("classif.acc")))
+```
+
+First, I would consider the accuracy and the classify error,if the accuracy is high, means the possibility of the prediction is right is high,so the higher the accuracy is, maybe the better the model is.And the error is in fact equals to 1-accuracy, so these two performance metrics are the same. So for this I just want to find higher accuracy to find which model is better.
+the accuracy of rpart model is 0.845,
+the accuracy of log_res model is 0.852, 
+the accuracy of xgboost model is 0.854,
+the accuracy of kknn model is 0.825,
+the accuracy of naive_bayes model is 0.829.
+So I think for the accuracy, the model xgboost,log_res are good.(In fact,rpart model is also good)
+Then,I would see the loss of each model.The loss of the function means the loss.Although some of the model may fits well,but it may overfitting,and the cost can be large.So the loss is a good performance metrics to define whether a model is good.The less the loss is,the better the model fits.The I would compare the loss of each model:
+The loss of rpart model is around 0.37.
+
+```{r}
+Loss=ress$score(list(msr("classif.logloss")))
+Loss[1]
+```
+the loss of log_res model is around 0.32.
+```{r}
+Loss=ress$score(list(msr("classif.logloss")))
+Loss[7]
+```
+the loss of xgboost model is around 0.54.
+```{r}
+Loss=ress$score(list(msr("classif.logloss")))
+Loss[13]
+```
+the loss of kknn model is around 0.93.
+```{r}
+Loss=ress$score(list(msr("classif.logloss")))
+Loss[19]
+```
+the loss of naive_bayes model is around 0.79.
+```{r}
+Loss=ress$score(list(msr("classif.logloss")))
+Loss[25]
+```
+
+So, it is certain the log_res model is better.(the rpart model is also good,but the loss of the xgboost model is a little large).
+Consider these two,I think the log_res model may be a good choose.
+Then I would consider deep learning for three models.
+
+First,consider a easy model :
+We can now start to construct our deep neural network architecture.
+We make a neural network with two hidden layers, 128 neurons in thefirst, 64 in second and an output to a binary classification:this model is called deep.net:
+
+```{r}
+income_split <- initial_split(uci.income)
+income_train <- training(income_split)
+
+income_split2 <- initial_split(testing(income_split), 0.5)
+income_validate <- training(income_split2)
+income_test <- testing(income_split2)
+library("recipes")
+cake <- recipe(Class ~ ., data = uci.income) %>%
+  step_meanimpute(all_numeric()) %>% 
+  step_center(all_numeric()) %>% 
+  step_scale(all_numeric()) %>% 
+  step_unknown(all_nominal(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), one_hot = TRUE) %>% 
+  prep(training = income_train) 
+
+income_train_final <- bake(cake, new_data = income_train) 
+income_validate_final <- bake(cake, new_data = income_validate)
+income_test_final <- bake(cake, new_data = income_test)
+
+library("keras")
+income_train_x <- income_train_final %>%
+  select(-starts_with("Class_")) %>%
+  as.matrix()
+income_train_y <- income_train_final %>%
+  select(Class_high) %>%
+  as.matrix()
+
+income_validate_x <- income_validate_final %>%
+  select(-starts_with("Class_")) %>%
+  as.matrix()
+income_validate_y <- income_validate_final %>%
+  select(Class_high) %>%
+  as.matrix()
+
+income_test_x <- income_test_final %>%
+  select(-starts_with("Class_")) %>%
+  as.matrix()
+income_test_y <- income_test_final %>%
+  select(Class_high) %>%
+  as.matrix()
+
+deep.net <- keras_model_sequential() %>%
+  layer_dense(units = 32, activation = "relu",
+              input_shape = c(ncol(income_train_x))) %>%
+  layer_dense(units = 32, activation = "relu") %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+deep.net
+
+deep.net %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = optimizer_rmsprop(),
+  metrics = c("accuracy")
+)
+deep.net %>% fit(
+  income_train_x, income_train_y,
+  epochs = 50, batch_size = 32,
+  validation_data = list(income_validate_x, income_validate_y),
+)
+
+
+pred_test_prob <- deep.net %>% predict_proba(income_test_x)
+
+pred_test_res <- deep.net %>% predict_classes(income_test_x)
+table(pred_test_res, income_test_y)
+yardstick::accuracy_vec(as.factor(income_test_y),
+                        as.factor(pred_test_res))
+
+```
+
+Then can find the accuracy of deep.net is 0.857,so this deep learning model is good, and it is true there is some 
+improvement,but the loss of this model is a little high,so the model is in fact not good enough.
+
+Then I wand to try deeper to see whether the model can be better.
+I call this model deep.net1:
+
+```{r}
+deep.net1 <- keras_model_sequential() %>%
+  layer_dense(units = 128, activation = "relu",
+              input_shape = c(ncol(income_train_x))) %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = 1, activation = "sigmoid")
+deep.net1
+deep.net1 %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = optimizer_rmsprop(),
+  metrics = c("accuracy")
+)
+
+deep.net1 %>% fit(
+  income_train_x, income_train_y,
+  epochs = 50, batch_size = 32,
+  validation_data = list(income_validate_x, income_validate_y),
+)
+pred_test_prob1 <- deep.net1 %>% predict_proba(income_test_x)
+
+pred_test_res1 <- deep.net1 %>% predict_classes(income_test_x)
+
+
+table(pred_test_res1, income_test_y)
+yardstick::accuracy_vec(as.factor(income_test_y),
+                        as.factor(pred_test_res1))
+```
+
+Then can find the accuracy of deep.net1 is 0.825,so this deep learning model is bad. I think it may caursed by overfitting,so I think this model should be removed.
+
+Then I consider to prove the model.We'll learn in lectures we have methods that can combat this and still allow fitting very deep neural networks:dropout net,and define the rate is 0.4.
+I call this model deep.net2:
+
+```{r}
+deep.net2 <- keras_model_sequential() %>%
+  layer_dense(units = 32, activation = "relu",
+              input_shape = c(ncol(income_train_x))) %>%
+  layer_batch_normalization() %>%
+  layer_dropout(rate = 0.4) %>%
+  layer_dense(units = 32, activation = "relu") %>%
+  layer_batch_normalization() %>%
+  layer_dropout(rate = 0.4) %>%
+  layer_dense(units = 32, activation = "relu") %>%
+  layer_batch_normalization() %>%
+  layer_dropout(rate = 0.4) %>%
+  layer_dense(units = 32, activation = "relu") %>%
+  layer_batch_normalization() %>%
+  layer_dropout(rate = 0.4) %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+deep.net2
+deep.net2 %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = optimizer_rmsprop(),
+  metrics = c("accuracy")
+)
+
+deep.net2 %>% fit(
+  income_train_x, income_train_y,
+  epochs = 50, batch_size = 32,
+  validation_data = list(income_validate_x, income_validate_y),
+)
+
+# To get the probability predictions on the test set:
+pred_test_prob2 <- deep.net2 %>% predict_proba(income_test_x)
+
+# To get the raw classes (assuming 0.5 cutoff):
+pred_test_res2 <- deep.net2 %>% predict_classes(income_test_x)
+
+table(pred_test_res2, income_test_y)
+yardstick::accuracy_vec(as.factor(income_test_y),
+                        as.factor(pred_test_res2))
+
+```
+
+Then can find the accuracy of deep.net is 0.854,it is good.And the loss is also loer than the other two deep learning models,so I will just consider this model.
+
+so, in short I think the log_res model,deep_net2 model,rpart model are good.
+
+**Do not exceed 4 A4 pages after knitting to PDF for this section.**
+
+In this part I should describe how the approached the modelling problem and summarise the performance metrics for how well your final model performs in full technical detail.
+
+1.I should deal with the data here.I first define the response as Class,and there are two class called high(means the salary >50K) and low(means the salary <=50K).The others are the factors,so named them in order(instead of V1~V15).
+
+2.I consider the cross-validation,this means I divide the data into some groups called n and use n-1 groups as the training data,the other one as the testing data,and repeat this.But first I need to consider which n to choose.
+• k = n (aka “Leave one out cross validation”)
+• has the lowest bias, since each model is almost the same as the full data model!
+• But, has very high variance since all models are so highly correlated with each
+other (mean of correlated variables has higher variance)
+• k = 2
+• has high bias, for the same reason as train/test/validate
+• lower variance, as models have no data dependent correlation
+Usual rule-of-thumb is k = 5 or k = 10, and here I choose n=6.
+
+```{r}
+uci.income <- read.csv("https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data"
+                       ,header = FALSE)
+library("dplyr")
+library("forcats")
+uci.income <- uci.income %>%
+  transmute(Age = V1,
+            Workclass  = V2,
+            Fnlwgt = V3,
+            Education  = V4,
+            EducationNum = V5,
+            Maritalstatus= V6,
+            Occupation= V7,
+            Relationship= V8,
+            Race= V9,
+            Sex= V10,
+            Capitalgain= V11,
+            Capitalloss= V12,
+            Hoursperweek= V13,
+            Nativecountry= V14,
+            Class= V15) %>%
+  mutate(Class = fct_recode(Class,high= " >50K",low= " <=50K"))
+
+set.seed(5000)
+library("rsample")
+library("data.table")
+library("mlr3verse")
+library("mlr3learners")
+uci.income=na.omit(uci.income)
+as.data.table(mlr_learners)
+income_task <- TaskClassif$new(id = "income",
+                               backend = uci.income, # <- NB: no na.omit() this time
+                               target = "Class",
+                               positive = "high")
+cv6 <- rsmp("cv", folds = 6)
+cv6$instantiate(income_task)
+```
+
+3.Then consider train/test/validate:
+• Only some of the data is used in fitting, other parts never used during fit.
+• Only some of data is used in evaluation (what if hard to predict observations
+are by chance allocated to train/test/…)
+• The final error estimate will usually be conservative, since once the best
+model is chosen we refit to the whole dataset and would expect slightly
+improved results.
+
+```{r}
+income_split <- initial_split(uci.income)
+income_train <- training(income_split)
+
+income_split2 <- initial_split(testing(income_split), 0.5)
+income_validate <- training(income_split2)
+income_test <- testing(income_split2)
+```
+
+4.The data may have some missing data,and there are some ways to solve this:
+• Surrogate: tree methods can handle natively by choosing a split direction for
+missing values.
+• Observation removal: delete observations with missing values (usually bad
+idea, throws away data)
+• Variable removal: delete whole variables with missing values so that all
+observations can be kept (usually also a bad idea)
+• Simple imputation: replace missing values with the mean/median/… of the
+observed values of that variable.
+• Model based imputation: build a model to predict the missing values from
+observed values
+
+```{r}
+uci.income=na.omit(uci.income)
+
+pl_missing <- po("fixfactors") %>>%
+  po("removeconstants") %>>%
+  po("imputesample", affect_columns = selector_type(c("ordered", "factor"))) %>>%
+  po("imputemean")
+```
+
+5.Then, From the first question, I just want to consider rpart model for more detail as a example:
+But before this,I would model all the models first:
+lrn_rpart <- lrn("classif.rpart", predict_type = "prob")
+lrn_log <- lrn("classif.log_reg", predict_type = "prob")
+lrn_xgboost <- lrn("classif.xgboost", predict_type = "prob")
+lrn_kknn <- lrn("classif.kknn", predict_type = "prob")
+lrn_bayes <- lrn("classif.naive_bayes", predict_type = "prob")
+But before this, I should define the task for the models.
+I set the id is income,the target is Class,and the possitive target is high(salary >50K)
+
+```{r}
+income_task <- TaskClassif$new(id = "income",
+                               backend = uci.income, # <- NB: no na.omit() this time
+                               target = "Class",
+                               positive = "high")
+
+lrn_rpart <- lrn("classif.rpart", predict_type = "prob")
+lrn_log <- lrn("classif.log_reg", predict_type = "prob")
+lrn_log <- po("encode") %>>%
+       po(lrn_log)
+lrn_xgboost <- lrn("classif.xgboost", predict_type = "prob")
+lrn_xgboost <- po("encode") %>>%
+       po(lrn_xgboost)
+
+lrn_kknn <- lrn("classif.kknn", predict_type = "prob")
+lrn_bayes <- lrn("classif.naive_bayes", predict_type = "prob")
+
+```
+
+For some improve, we can see the encode pipeline can do one-hot encoding of factors.
+We'll do this first.  XGBoost doesn't accept factors, so we now create a pipeline operation to encode them before passing to the learner.  
+
+Then I can examine in depth the results by getting out the models fitted in each fold,eg get the trees (1st model fitted), by asking for second set of resample results:(rpart model)
+
+```{r}
+trees=ress$resample_result(1)
+```
+
+Then, let's look at the tree from first CV iteration
+
+```{r}
+tree1 <- trees$learners[[1]]
+```
+
+This is a fitted rpart object, so we can look at the model within:
+
+```{r}
+tree1_rpart <- tree1$model
+plot(tree1_rpart, compress = TRUE, margin = 0.1)
+text(tree1_rpart, use.n = TRUE, cex = 0.8)
+```
+
+It may be that these trees need to be pruned. To do this, we would need to enable the cross-validation option to `rpart` in the learner. We can fit this individually and make a selection for the cost penalty , before then setting this value when benchmarking (NOTE: this is not quite optimal but MLR3 doesn't yet have the option for us to select this within folds ... coming soon hopefully). In particular, note we are now doing *nested* cross validation which is the correct way to do parameter selection without biasing test error. 
+
+```{r}
+lrn_rpart_cv <- lrn("classif.rpart", predict_type = "prob", xval = 10)
+res_rpart_cv <- resample(income_task, lrn_rpart_cv, cv6, store_models = TRUE)
+rpart::plotcp(res_rpart_cv$learners[[6]]$model)
+lrn_rpart_cp <- lrn("classif.rpart", predict_type = "prob", cp = 0.02)
+res_rpart_cp <- resample(income_task, lrn_rpart, cv6, store_models = TRUE)
+pred_rpart_cp=res_rpart_cp$prediction()
+pred_rpart_cp$confusion
+```
+
+Then, see from the plot, the value of cp should be 0.02(around this).
+In this case I see a slight improvement,but the improvement is too small, and I don't think it is very useful.
+
+6.Then I should think more about deep learning.
+First,consider a easy model :
+We can now start to construct our deep neural network architecture.
+We make a neural network with two hidden layers, 128 neurons in thefirst, 64 in second and an output to a binary classification:this model is called deep.net:
+But the accuracy is about 0.85,good but I think it can be better, and the loss is about 0.37,I think it is a little
+large.Then I wand to try deeper to see whether the model can be better.And I call this model deep.net1.
+However I think this model is not good,the loss is very large(around 0.6), and th accuracy is a little small(around 0.83).
+So,I think this deep learning is overfitting,We'll learn in lectures we have methods that can combat this and still allow fitting very deep neural networks: use the dropout net,and define the rate is 0.4.
+I called this model deep_net2,and the accuracy is about 0.86,the loss is about 0.35.So, I think this time the modeling meoth is quite better.I would choose this.
+
+7.Then I would show some performance metrics to comparing my models.
+Here I would consider AUC,true positive rate.
+
+```{r}
+ress$aggregate(list(msr("classif.tpr"),
+                    msr("classif.tnr"),
+                   msr("classif.fpr"),
+                   msr("classif.fnr"),
+                   msr("classif.precision")))  
+
+AUC=ress$score(list(msr("classif.auc")))
+AUC[1]
+AUC[7]
+AUC[13]
+AUC[19]
+AUC[25]
+
+table(pred_test_res, income_test_y)
+
+yardstick::roc_auc_vec(as.factor(income_test_y),
+                       c(pred_test_prob))
+
+table(pred_test_res1, income_test_y)
+
+yardstick::roc_auc_vec(as.factor(income_test_y),
+                       c(pred_test_prob1))
+
+table(pred_test_res2, income_test_y)
+
+yardstick::roc_auc_vec(as.factor(income_test_y),
+                       c(pred_test_prob2))
+
+```
+
+First, I should talk about AUC, AUC is the area under the ROC, We often use the AUC value as the evaluation criterion of the model because many times the ROC curve cannot clearly indicate which classifier performs better, and as a value, the classifier with a larger AUC performs better.
+• AUC = 0.5 :no better than featureless baseline classifier
+• AUC = 1 :perfect classifier making no prediction errors
+So, the larger the AUC is, the better the model is.
+The AUC of rpart model is around 0.85,it is good, but not very high.
+
+The AUC of log_res model is around 0.9,it is quite high.
+
+The AUC of xgboost model is around 0.89,it is quite high.
+
+The AUC of kknn model is around 0.86,it is good, but not very high.
+
+The AUC of naive_bayes model is round 0.87,it is good, but not very high.
+
+The AUC of deep_net(simple one) is round 0.9,it is high.
+
+The AUC of deep_net1(overfitting one) is around 0.89,it is also high.
+
+The AUC of deep_net2 (dropout) is around 0.91,it is high.
+So,for AUC, the deep learning models(net) , the xgboost model and the log_res model are good for high values.
+
+Then I can consider tpr(the possibility of the predict is possitive and the truth is possitive too), so the higher it is, the better the model is. Similarly to tnp(the possibility of the predict is negative and the truth is negative too).so the higher it is, the better the model is. The fpr is the possibility of the first error type(the truth is negative but the prediction is positive), and the fnr is the possibility of the first error type(the truth is positive but the prediction is negative).So,the lower the fpr and the fnr is ,the better th model is.
+rpart model:tpr=0.513,tpr=0.95,fpr=0.05,fnr=0.487.So,this model is poor in predict the the positive class.
+
+log_res model:tpr=0.602,tnr=0.93,fpr=0.07,fnr=0.397,So,this model seems good compared with other models,although this model also unable to predict the positive class well.
+
+xgboost model:tpr=0.54,tnr=0.954,fpr=0.46,fnr=0.46.So,this model is poor in predict the the positive class.
+
+kknn model:tpr=0.587,tnr=0.9,fpr=0.1,fnr=0.41.This model can predict positive class a little better,but it also predict the negative class worse.So this model also not good.
+
+naive_bayes:tpr=0.5,tnr=0.93,fpr=0.67,fnr=0.5.So,this model is poor in predict the the positive class.
+
+deep_net:tpr=646/(646+344)=0.652,tnp=2843/(2843+237)=0.92, so I think this deep learning(net) model is almost good compared with other models.I won't consider deep_net1 since this model is ture to overfitting.
+
+deep_net2(dropout):tpr=603/(387+603)=0.61,tnp=2873/(2873+207)=0.933.this model is also good.
+
+So,I think the log_res model and the deep learning model(dropout/net),and change some values,maybe I can find better deep learning models.
+Moreover,to improve the model,I think maybe I can remove some unnecessary data,or connection datas before I fitting the model next time.
